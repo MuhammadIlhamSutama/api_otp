@@ -3,7 +3,10 @@ import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
-dotenv.config();
+// Hanya load dotenv kalau environment bukan production (bisa hapus ini jika di Railway)
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
 
 const app = express();
 app.use(express.json());
@@ -27,59 +30,71 @@ const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
     user: EMAIL_USER,
-    pass: EMAIL_PASS
-  }
+    pass: EMAIL_PASS,
+  },
 });
 
 app.post('/send-otp', async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email diperlukan' });
-
-  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-  await supabase.from('otps').delete().lt('created_at', twoMinutesAgo);
-
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-  const { error } = await supabase
-    .from('otps')
-    .upsert({ email, otp, created_at: new Date().toISOString() });
-
-  if (error) return res.status(500).json({ error: error.message });
-
   try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email diperlukan' });
+
+    // Bisa tambah validasi email sederhana, misal regex (optional)
+
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    await supabase.from('otps').delete().lt('created_at', twoMinutesAgo);
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    const { error } = await supabase
+      .from('otps')
+      .upsert({ email, otp, created_at: new Date().toISOString() });
+
+    if (error) return res.status(500).json({ error: error.message });
+
     await transporter.sendMail({
       from: EMAIL_USER,
       to: email,
       subject: 'Kode OTP Anda',
-      text: `Kode OTP Anda adalah ${otp}. Berlaku selama 2 menit.`
+      text: `Kode OTP Anda adalah ${otp}. Berlaku selama 2 menit.`,
     });
+
     res.json({ message: 'OTP terkirim ke email.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Terjadi kesalahan server.' });
   }
 });
 
 app.post('/verify-otp', async (req, res) => {
-  const { email, otp } = req.body;
-  if (!email || !otp) return res.status(400).json({ error: 'Email dan OTP diperlukan' });
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp)
+      return res.status(400).json({ error: 'Email dan OTP diperlukan' });
 
-  const { data, error } = await supabase
-    .from('otps')
-    .select('*')
-    .eq('email', email)
-    .single();
+    // Bisa tambah validasi input (opsional)
 
-  if (error || !data) return res.status(400).json({ error: 'OTP tidak ditemukan.' });
+    const { data, error } = await supabase
+      .from('otps')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-  const isValid = data.otp === otp;
-  const createdAt = new Date(data.created_at);
-  const now = new Date();
-  const expired = (now - createdAt) > 2 * 60 * 1000;
+    if (error || !data) return res.status(400).json({ error: 'OTP tidak ditemukan.' });
 
-  if (!isValid) return res.status(400).json({ error: 'OTP salah.' });
-  if (expired) return res.status(400).json({ error: 'OTP sudah kedaluwarsa.' });
+    const isValid = data.otp === otp;
+    const createdAt = new Date(data.created_at);
+    const now = new Date();
+    const expired = now - createdAt > 2 * 60 * 1000; // 2 menit
 
-  res.json({ message: 'OTP valid.' });
+    if (!isValid) return res.status(400).json({ error: 'OTP salah.' });
+    if (expired) return res.status(400).json({ error: 'OTP sudah kedaluwarsa.' });
+
+    res.json({ message: 'OTP valid.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Terjadi kesalahan server.' });
+  }
 });
 
 app.listen(PORT, () => console.log(`🚀 Server berjalan di port ${PORT}`));
